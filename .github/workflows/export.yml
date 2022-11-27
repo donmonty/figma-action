@@ -1,5 +1,5 @@
 name: Export Figma Images
-on: [workflow_dispatch, repository_dispatch, push]
+on: [workflow_dispatch]
 jobs:
   image-export:
     runs-on: ubuntu-latest
