@@ -2,6 +2,7 @@ require('dotenv').config()
 const axios = require('axios');
 const PQueue = require('p-queue');
 const S3 = require('aws-sdk/clients/s3');
+const utils = require('./utils');
 
 async function run() {
 
@@ -89,16 +90,53 @@ async function run() {
         }
       }
     );
-    const data = response.data;
+    const fileData = response.data;
 
-    data.document.children.forEach(check);
+    fileData.document.children.forEach(check);
     if (Object.values(components).length === 0) {
       throw Error('No components found!');
     }
     console.log(`${Object.values(components).length} components found in the Figma file`);
 
     // Get image URLS
-    const componentIds = Object.keys(components);
+    // const componentIds = Object.keys(components);
+    // Get the IDs of the components that have url === null in de DB
+    const supabaseClient = await utils.getSupaServiceClient();
+    const logoObjects = Object.values(components).map(component => {
+      return {
+        id: component.id,
+        name: component.name,
+        url: `https://${s3ImagesBucketName}.s3.us-west-1.amazonaws.com/${component.name}`
+      }
+    });
+    const { data, error } = await supabaseClient
+      .from('logos')
+      .select("id, name, url")
+      .is("url", null);
+
+    if (error) {
+      throw error;
+    }
+    console.log("Supabase DB data: ", data);
+
+    // Upload only logos with null URLs
+    const logosWithNullUrls = data;
+    console.log("Logos with null URLs:", logosWithNullUrls);
+    // If there are no logos with null URLs, return
+    if (logosWithNullUrls.length === 0) return;
+    // Assign the URLs to the logos
+    const componentIds = logosWithNullUrls.map(logo => {
+      return logoObjects.find(logoObject => logoObject.name === logo.name).id;
+    });
+    // Create a new component list that only contains the logos with null URLs
+    const componentsOk = {};
+    logosWithNullUrls.forEach(logo => {
+      const value = logoObjects.find(logoObject => logoObject.name === logo.name);
+      const id = logoObjects.find(logoObject => logoObject.name === logo.name).id;
+      componentsOk[id] = value;
+    });
+    
+
     const imageUrls = await axios.get(
       `https://api.figma.com/v1/images/${FIGMA_FILE_URL}?ids=${componentIds}&format=png`,
       {
@@ -111,15 +149,46 @@ async function run() {
     
     // Insert the image URLS into the components object
     for(const id of Object.keys(imageUrls.data.images)) {
-      components[id].image = imageUrls.data.images[id]
+      componentsOk[id].image = imageUrls.data.images[id]
     }
 
-    const tasks = Object.values(components).map(async (component) => {
+    console.log("ComponentsOk: ", componentsOk);
+
+    const tasks = Object.values(componentsOk).map(async (component) => {
       return await uploadImage(component.image, component.name, "image/png");
     });
 
     // Upload images to S3 bucket
     queueTasks(tasks);
+
+    
+    const logoObjectsToUpdate = Object.values(componentsOk).map(component => {
+      return {
+        name: component.name,
+        url: `https://${s3ImagesBucketName}.s3.us-west-1.amazonaws.com/${component.name}`
+      }
+    });
+
+    // Assign the URLs to the logos
+    const logosToUpdate = logoObjectsToUpdate.map(logo => {
+      return {
+        id: logosWithNullUrls.find(logoWithNullUrl => logoWithNullUrl.name === logo.name).id,
+        url: logo.url,
+        name: logo.name
+      };
+    });
+    console.log("Logos to update: ", logosToUpdate);
+
+    // Update the logos in the DB
+    const { data: upsertedData, error: upsertedError } = await supabaseClient
+      .from('logos')
+      .upsert(logosToUpdate)
+      .select();
+
+    if (upsertedError) {
+      throw upsertedError;
+    }
+    console.log("Upserted data: ", upsertedData);
 
 
   } catch(err) {
