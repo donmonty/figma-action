@@ -125,15 +125,24 @@ async function run() {
     // If there are no logos with null URLs, return
     if (logosWithNullUrls.length === 0) return;
     // Assign the URLs to the logos
-    const componentIds = logosWithNullUrls.map(logo => {
-      return logoObjects.find(logoObject => logoObject.name === logo.name).id;
+    let componentIds = logosWithNullUrls.map(logo => {
+      const obj = logoObjects.find(logoObject => logoObject.name === logo.name);
+      if (obj) return obj.id;
+      return null;
     });
+    componentIds = componentIds.filter(id => id !== null);
+
+    console.log("Component IDs:", componentIds);
+
     // Create a new component list that only contains the logos with null URLs
     const componentsOk = {};
     logosWithNullUrls.forEach(logo => {
       const value = logoObjects.find(logoObject => logoObject.name === logo.name);
-      const id = logoObjects.find(logoObject => logoObject.name === logo.name).id;
-      componentsOk[id] = value;
+      let id = logoObjects.find(logoObject => logoObject.name === logo.name);
+      if (value && id) {
+        id = id.id;
+        componentsOk[id] = value;
+      }
     });
     
 
@@ -159,7 +168,7 @@ async function run() {
     });
 
     // Upload images to S3 bucket
-    queueTasks(tasks);
+    // queueTasks(tasks);
 
     
     const logoObjectsToUpdate = Object.values(componentsOk).map(component => {
@@ -180,15 +189,15 @@ async function run() {
     console.log("Logos to update: ", logosToUpdate);
 
     // Update the logos in the DB
-    const { data: upsertedData, error: upsertedError } = await supabaseClient
-      .from('logos')
-      .upsert(logosToUpdate)
-      .select();
+    // const { data: upsertedData, error: upsertedError } = await supabaseClient
+    //   .from('logos')
+    //   .upsert(logosToUpdate)
+    //   .select();
 
-    if (upsertedError) {
-      throw upsertedError;
-    }
-    console.log("Upserted data: ", upsertedData);
+    // if (upsertedError) {
+    //   throw upsertedError;
+    // }
+    // console.log("Upserted data: ", upsertedData);
 
 
   } catch(err) {
